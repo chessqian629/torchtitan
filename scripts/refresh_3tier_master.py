@@ -187,14 +187,20 @@ def build_street_row(cfg: Config) -> dict:
     tp_base = e_base * pe_base
     tp_bull = e_bull * pe_bull
 
-    note = "NVDA Q2FY27已报" if cfg.ticker == "NVDA" else "全量刷新"
-    if cfg.ticker == "MRVL":
-        note = "MRVL待财报(~8/27); 全量刷新"
-    if cfg.ticker == "AVGO":
-        note = "下刊~9/2; 全量刷新"
+    pe_bear_r, pe_base_r, pe_bull_r = round(pe_bear, 1), round(pe_base, 1), round(pe_bull, 1)
+    pe_tiers = f"熊{pe_bear_r}/中{pe_base_r}/牛{pe_bull_r}×"
+    pe_source = f"street-wing mid=tgt/C; {pe_tiers}"
+
+    note = "全量刷新"
+    if cfg.ticker == "NVDA":
+        note = f"Q2FY27已报; {pe_tiers}; fwdPE≈{round(fwd_pe, 1)}×"
+    elif cfg.ticker == "MRVL":
+        note = f"MRVL待财报(~8/27); {pe_tiers}"
+    elif cfg.ticker == "AVGO":
+        note = f"下刊~9/2; {pe_tiers}"
 
     return row_dict(cfg, px, street_tgt, c, eps_src, beat, e_bear, e_base, e_bull,
-                    pe_bear, pe_base, pe_bull, "street-wing mid=tgt/C", None, None,
+                    pe_bear_r, pe_base_r, pe_bull_r, pe_tiers, pe_source, None, None,
                     fwd_pe, tp_bear, tp_base, tp_bull, note)
 
 
@@ -214,15 +220,17 @@ def build_storage_row(cfg: Config) -> dict:
     pe_bear, pe_base, pe_bull, dyn_now, pe_src = dynamic_pe_bands(cfg.ticker, w)
     if cfg.ticker == "MU":
         pe_bear = MU_BEAR_PE_ANCHOR
-    tp_bear = e_bear * pe_bear
-    tp_base = e_base * pe_base
-    tp_bull = e_bull * pe_bull
+    pe_bear_r, pe_base_r, pe_bull_r = round(pe_bear, 1), round(pe_base, 1), round(pe_bull, 1)
+    pe_tiers = f"熊{pe_bear_r}/中{pe_base_r}/牛{pe_bull_r}×"
+    tp_bear = e_bear * pe_bear_r
+    tp_base = e_base * pe_base_r
+    tp_bull = e_bull * pe_bull_r
     vjn = fetch_vjn_forward_pe(cfg.ticker)
-    note = "全量刷新"
+    note = f"全量刷新; {pe_tiers}"
     if cfg.ticker == "MU":
-        note = "下刊~9/23; 熊PE锚定5.25"
+        note = f"下刊~9/23; 熊PE锚定5.25; {pe_tiers}"
     return row_dict(cfg, px, street_tgt, c, f"动态NTM w={w}", beat, e_bear, e_base, e_bull,
-                    pe_bear, pe_base, pe_bull, pe_src, dyn_now, vjn, fwd_pe,
+                    pe_bear_r, pe_base_r, pe_bull_r, pe_tiers, pe_src, dyn_now, vjn, fwd_pe,
                     tp_bear, tp_base, tp_bull, note)
 
 
@@ -253,6 +261,7 @@ def build_nbis_row() -> dict:
         "pe_bear": n["ev_arr_bear"],
         "pe_base": n["ev_arr_base"],
         "pe_bull": n["ev_arr_bull"],
+        "pe_tiers": f"熊{n['ev_arr_bear']}/中{n['ev_arr_base']}/牛{n['ev_arr_bull']}×(EV/ARR)",
         "pe_source": "bc-01a016f0终稿 EV/ARR 3/5/7 × ARR $14/17/22B → $140/$291/$533",
         "dynPE_now": "",
         "vjn_forward_pe": "",
@@ -269,7 +278,7 @@ def build_nbis_row() -> dict:
 
 
 def row_dict(cfg, px, street_tgt, c, eps_src, beat, e_bear, e_base, e_bull,
-             pe_bear, pe_base, pe_bull, pe_source, dyn_now, vjn, fwd_pe,
+             pe_bear, pe_base, pe_bull, pe_tiers, pe_source, dyn_now, vjn, fwd_pe,
              tp_bear, tp_base, tp_bull, note) -> dict:
     up = lambda t: (t / px - 1) * 100 if px else 0
     return {
@@ -287,6 +296,7 @@ def row_dict(cfg, px, street_tgt, c, eps_src, beat, e_bear, e_base, e_bull,
         "pe_bear": pe_bear,
         "pe_base": pe_base,
         "pe_bull": pe_bull,
+        "pe_tiers": pe_tiers,
         "pe_source": pe_source,
         "dynPE_now": dyn_now if dyn_now is not None else "",
         "vjn_forward_pe": vjn if vjn is not None else "",
@@ -314,7 +324,7 @@ def main():
 
     fieldnames = [
         "ticker", "name", "currency", "px", "street_tgt", "C", "eps_src", "beat_b_pct",
-        "e_bear", "e_base", "e_bull", "pe_bear", "pe_base", "pe_bull", "pe_source",
+        "e_bear", "e_base", "e_bull", "pe_bear", "pe_base", "pe_bull", "pe_tiers", "pe_source",
         "dynPE_now", "vjn_forward_pe", "yahoo_fwdPE", "tp_bear", "tp_base", "tp_bull",
         "up_bear_pct", "up_base_pct", "up_bull_pct", "note", "asof",
     ]
