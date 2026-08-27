@@ -42,6 +42,18 @@ NBIS_ROW = {
     "ev_arr_bull": 7.0,
 }
 
+# INTC: FY27 analyst dispersion + inverted PE (no beat rate)
+INTC_MODEL = {
+    "e_bear": 1.41,
+    "e_base": 2.06,
+    "e_bull": 3.44,
+    "pe_bear": 55.0,
+    "pe_base": 50.0,
+    "pe_bull": 45.0,
+    "fy27_rev_b": 71.3,
+    "net_debt_b": 20.8,
+}
+
 
 @dataclass
 class Config:
@@ -66,7 +78,7 @@ CONFIGS = [
     Config("MRVL", "Marvell", "USD", "street"),
     Config("AMD", "AMD", "USD", "street"),
     Config("COHR", "Coherent", "USD", "story0y", "0y"),
-    Config("INTC", "英特尔", "USD", "street", beat_cap=15.0),
+    Config("INTC", "英特尔", "USD", "intc"),
     Config("000660.KS", "海力士", "KRW", "storage"),
     Config("005930.KS", "三星", "KRW", "storage"),
     Config("AMZN", "亚马逊", "USD", "street"),
@@ -161,6 +173,36 @@ def dynamic_pe_bands(ticker: str, w: float, lookback_days: int = 365) -> tuple[f
     px = float(info.get("currentPrice") or info.get("regularMarketPrice") or hist["Close"].iloc[-1])
     dyn_now = px / ntm if ntm else 0.0
     return pe_bear, pe_base, pe_bull, float(dyn_now), pe_src
+
+
+def build_intc_row(cfg: Config) -> dict:
+    """INTC custom: FY27 EPS dispersion × inverted PE tiers."""
+    tk = yf.Ticker("INTC")
+    info = tk.info or {}
+    px = float(info.get("currentPrice") or info.get("regularMarketPrice") or 0)
+    street_tgt = float(info.get("targetMeanPrice") or 0)
+    fwd_pe = float(info.get("forwardPE") or 0)
+    m = INTC_MODEL
+    e_bear, e_base, e_bull = m["e_bear"], m["e_base"], m["e_bull"]
+    pe_bear_r, pe_base_r, pe_bull_r = m["pe_bear"], m["pe_base"], m["pe_bull"]
+    tp_bear = pe_bear_r * e_bear
+    tp_base = pe_base_r * e_base
+    tp_bull = pe_bull_r * e_bull
+    pe_tiers = f"熊{pe_bear_r:.0f}/中{pe_base_r:.0f}/牛{pe_bull_r:.0f}×(倒挂)"
+    pe_source = (
+        "FY27离散度×PE倒挂(熊高倍/牛低倍); "
+        f"EV/Sales≈6.2/8.0/11.8×(@FY27 Rev ${m['fy27_rev_b']}B)"
+    )
+    eps_src = "FY27离散度(39分析师): $1.41/$2.06/$3.44; 不用beat"
+    note = (
+        f"{pe_tiers}; CapEx>$20B/2027更高; "
+        f"净负债${m['net_debt_b']}B; SCIP回购$14.2B; 以色列KG厂地缘风险"
+    )
+    return row_dict(
+        cfg, px, street_tgt, e_base, eps_src, "", e_bear, e_base, e_bull,
+        pe_bear_r, pe_base_r, pe_bull_r, pe_tiers, pe_source, None, None,
+        fwd_pe, tp_bear, tp_base, tp_bull, note,
+    )
 
 
 def build_street_row(cfg: Config) -> dict:
@@ -289,7 +331,7 @@ def row_dict(cfg, px, street_tgt, c, eps_src, beat, e_bear, e_base, e_bull,
         "street_tgt": street_tgt,
         "C": c,
         "eps_src": eps_src,
-        "beat_b_pct": round(beat, 2),
+        "beat_b_pct": round(beat, 2) if beat != "" else "",
         "e_bear": e_bear,
         "e_base": e_base,
         "e_bull": e_bull,
@@ -318,6 +360,8 @@ def main():
         print(f"Processing {cfg.ticker}...")
         if cfg.kind == "storage":
             rows.append(build_storage_row(cfg))
+        elif cfg.kind == "intc":
+            rows.append(build_intc_row(cfg))
         else:
             rows.append(build_street_row(cfg))
     rows.insert(11, build_nbis_row())  # after COHR
