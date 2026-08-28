@@ -237,7 +237,10 @@ def build_street_row(cfg: Config) -> dict:
     if cfg.ticker == "NVDA":
         note = f"Q2FY27已报; {pe_tiers}; fwdPE≈{round(fwd_pe, 1)}×"
     elif cfg.ticker == "MRVL":
-        note = f"MRVL待财报(~8/27); {pe_tiers}"
+        note = (
+            f"Q2FY27已报: Rev$2.74B(+37%YoY) NG EPS$0.94; "
+            f"Q3指引Rev$3.15B±5% EPS$1.10±0.05; 上调FY27/28收入展望; {pe_tiers}"
+        )
     elif cfg.ticker == "AVGO":
         note = f"下刊~9/2; {pe_tiers}"
 
