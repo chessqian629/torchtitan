@@ -87,16 +87,22 @@ CONFIGS = [
 
 
 def fiscal_weight(ticker: str, today: dt.date | None = None) -> float:
+    """Weight on +1y in NTM = (1-w)*0y + w*+1y.
+
+    Yahoo often keeps 0y/+1y labels until the Q4 print (~30-45d after
+    fiscal year-end). During that lag, clamp w near year-end so NTM stays
+    on the forward year the market is pricing (matches Yahoo forwardPE).
+    """
     today = today or dt.date.today()
     end_month = FISCAL_END_MONTH[ticker]
-    # months since last fiscal year end
-    if today.month > end_month:
+    if today.month > end_month or (today.month == end_month and today.day >= 28):
         fy_end = dt.date(today.year, end_month, 28)
     else:
         fy_end = dt.date(today.year - 1, end_month, 28)
-    days_in_fy = 365
     elapsed = (today - fy_end).days
-    w = max(0.0, min(1.0, elapsed / days_in_fy))
+    if 0 <= elapsed <= 45:
+        return 0.97
+    w = max(0.0, min(1.0, elapsed / 365.0))
     return round(w, 2)
 
 
@@ -242,7 +248,12 @@ def build_street_row(cfg: Config) -> dict:
             f"Q3指引Rev$3.15B±5% EPS$1.10±0.05; 上调FY27/28收入展望; {pe_tiers}"
         )
     elif cfg.ticker == "AVGO":
-        note = f"下刊~9/2; {pe_tiers}"
+        note = (
+            f"Q3FY26已报(9/2): NG EPS$3.32 vs $3.24; "
+            f"C用+1y; {pe_tiers}"
+        )
+    elif cfg.ticker == "MU":
+        note = f"下刊~9/23; {pe_tiers}"
 
     return row_dict(cfg, px, street_tgt, c, eps_src, beat, e_bear, e_base, e_bull,
                     pe_bear_r, pe_base_r, pe_bull_r, pe_tiers, pe_source, None, None,
