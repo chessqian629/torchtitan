@@ -80,6 +80,7 @@ CONFIGS = [
     Config("COHR", "Coherent", "USD", "story0y", "0y"),
     Config("INTC", "英特尔", "USD", "intc"),
     Config("000660.KS", "海力士", "KRW", "storage"),
+    Config("SKHY", "海力士ADR", "USD", "skhy"),
     Config("005930.KS", "三星", "KRW", "storage"),
     Config("AMZN", "亚马逊", "USD", "street"),
     Config("MSFT", "微软", "USD", "street"),
@@ -179,6 +180,48 @@ def dynamic_pe_bands(ticker: str, w: float, lookback_days: int = 365) -> tuple[f
     px = float(info.get("currentPrice") or info.get("regularMarketPrice") or hist["Close"].iloc[-1])
     dyn_now = px / ntm if ntm else 0.0
     return pe_bear, pe_base, pe_bull, float(dyn_now), pe_src
+
+
+def build_skhy_row(cfg: Config) -> dict:
+    """SKHY Nasdaq ADR: 10 ADR = 1 ORD. Street-wing on USD +1y EPS."""
+    tk = yf.Ticker("SKHY")
+    info = tk.info or {}
+    trend = tk.get_eps_trend()
+    px = float(info.get("currentPrice") or info.get("regularMarketPrice") or 0)
+    street_tgt = float(info.get("targetMeanPrice") or 0)
+    fwd_pe = float(info.get("forwardPE") or 0)
+    c = float(trend.loc["+1y", "current"])
+    # Beat from KR ordinary (ADR surprise feed is noisy); same skip-extreme rule
+    beat = calc_beat("000660.KS", cap=None)
+    e_bear, e_base, e_bull = eps_tiers(c, beat)
+    pe_bear, pe_base, pe_bull = street_wing_pe(street_tgt, c)
+    pe_bear_r, pe_base_r, pe_bull_r = round(pe_bear, 1), round(pe_base, 1), round(pe_bull, 1)
+    pe_tiers = f"熊{pe_bear_r}/中{pe_base_r}/牛{pe_bull_r}×"
+    tp_bear = e_bear * pe_bear_r
+    tp_base = e_base * pe_base_r
+    tp_bull = e_bull * pe_bull_r
+
+    # Parity vs KR ordinary for note
+    try:
+        krw_px = float((yf.Ticker("000660.KS").info or {}).get("currentPrice") or 0)
+        fx = float((yf.Ticker("USDKRW=X").info or {}).get("regularMarketPrice") or 0)
+        parity = (krw_px / fx) / 10.0 if fx else 0.0
+        prem = (px / parity - 1) * 100 if parity else 0.0
+        parity_note = f"平价${parity:.0f}/溢价{prem:+.0f}%"
+    except Exception:
+        parity_note = "10ADR=1ORD"
+
+    note = (
+        f"Nasdaq ADR 10:1; street-wing on USD +1y; "
+        f"beat取自000660.KS; {parity_note}; {pe_tiers}"
+    )
+    pe_source = f"street-wing mid=tgt/C (SKHY USD); {pe_tiers}"
+    return row_dict(
+        cfg, px, street_tgt, c, "SKHY +1y/FY2 USD", beat,
+        e_bear, e_base, e_bull, pe_bear_r, pe_base_r, pe_bull_r,
+        pe_tiers, pe_source, None, None, fwd_pe,
+        tp_bear, tp_base, tp_bull, note,
+    )
 
 
 def build_intc_row(cfg: Config) -> dict:
@@ -376,6 +419,8 @@ def main():
             rows.append(build_storage_row(cfg))
         elif cfg.kind == "intc":
             rows.append(build_intc_row(cfg))
+        elif cfg.kind == "skhy":
+            rows.append(build_skhy_row(cfg))
         else:
             rows.append(build_street_row(cfg))
     rows.insert(11, build_nbis_row())  # after COHR
@@ -396,12 +441,13 @@ def main():
             w.writerows(rows)
         print(f"Wrote {path}")
 
-    # Print NVDA summary
-    nvda = next(r for r in rows if r["ticker"] == "NVDA")
-    print("\n=== NVDA ===")
-    for k in ["px", "street_tgt", "C", "beat_b_pct", "tp_bear", "tp_base", "tp_bull",
-              "up_bear_pct", "up_base_pct", "up_bull_pct"]:
-        print(f"  {k}: {nvda[k]}")
+    for sym in ("NVDA", "SKHY", "000660.KS"):
+        row = next(r for r in rows if r["ticker"] == sym)
+        print(f"\n=== {sym} ===")
+        for k in ["px", "street_tgt", "C", "beat_b_pct", "pe_tiers",
+                  "tp_bear", "tp_base", "tp_bull",
+                  "up_bear_pct", "up_base_pct", "up_bull_pct", "note"]:
+            print(f"  {k}: {row[k]}")
 
 
 if __name__ == "__main__":
