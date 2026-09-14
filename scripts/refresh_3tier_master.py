@@ -113,19 +113,31 @@ LEGACY_BEAT_OVERRIDE = {"AAOI": 14.65}
 def calc_beat(ticker: str, cap: float | None = 15.0) -> float:
     if ticker in LEGACY_BEAT_OVERRIDE:
         return LEGACY_BEAT_OVERRIDE[ticker]
-    ed = yf.Ticker(ticker).earnings_dates
-    if ed is None or ed.empty:
-        return 0.0
-    df = ed.dropna(subset=["Surprise(%)"])
-    surprises = df["Surprise(%)"].values
-    # Exclude the latest print when it is an extreme one-off beat (>50%)
-    if len(surprises) >= 5 and surprises[0] > 50:
-        surprises = surprises[1:5]
-    else:
-        surprises = surprises[:4]
-    if cap is not None:
-        surprises = np.clip(surprises, None, cap)
-    return float(np.mean(surprises))
+    try:
+        ed = yf.Ticker(ticker).earnings_dates
+    except Exception:
+        ed = None
+    if ed is not None and not ed.empty and "Surprise(%)" in ed.columns:
+        df = ed.dropna(subset=["Surprise(%)"])
+        if not df.empty:
+            surprises = df["Surprise(%)"].values
+            # Exclude the latest print when it is an extreme one-off beat (>50%)
+            if len(surprises) >= 5 and surprises[0] > 50:
+                surprises = surprises[1:5]
+            else:
+                surprises = surprises[:4]
+            if cap is not None:
+                surprises = np.clip(surprises, None, cap)
+            return float(np.mean(surprises))
+    # Fallback: reuse last master-table beat if Yahoo scrape fails
+    try:
+        with open("/workspace/us_tech_3tier_master_latest.csv", newline="") as f:
+            for row in csv.DictReader(f):
+                if row["ticker"] == ticker and row.get("beat_b_pct") not in ("", None):
+                    return float(row["beat_b_pct"])
+    except Exception:
+        pass
+    return 0.0
 
 
 def load_legacy_pe(ticker: str) -> tuple[float, float, float, str]:
