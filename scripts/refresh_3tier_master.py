@@ -27,6 +27,9 @@ FISCAL_END_MONTH = {
 }
 
 MU_BEAR_PE_ANCHOR = 5.25
+# COHR: street-wing bear (mid×0.75≈33×) sits above spot & street-low (~30× FY27).
+# Anchor bear nearer 1Y hist p25–spot band (~20–30×) so downside is real.
+COHR_BEAR_PE_ANCHOR = 25.0
 LEGACY_MASTER = "/workspace/us_tech_3tier_master_20260818.csv"
 
 NBIS_ROW = {
@@ -286,13 +289,20 @@ def build_street_row(cfg: Config) -> dict:
 
     e_bear, e_base, e_bull = eps_tiers(c, beat)
     pe_bear, pe_base, pe_bull = street_wing_pe(street_tgt, c)
-    tp_bear = e_bear * pe_bear
-    tp_base = e_base * pe_base
-    tp_bull = e_bull * pe_bull
+    if cfg.ticker == "COHR":
+        pe_bear = COHR_BEAR_PE_ANCHOR
 
     pe_bear_r, pe_base_r, pe_bull_r = round(pe_bear, 1), round(pe_base, 1), round(pe_bull, 1)
+    tp_bear = e_bear * pe_bear_r
+    tp_base = e_base * pe_base_r
+    tp_bull = e_bull * pe_bull_r
     pe_tiers = f"熊{pe_bear_r}/中{pe_base_r}/牛{pe_bull_r}×"
     pe_source = f"street-wing mid=tgt/C; {pe_tiers}"
+    if cfg.ticker == "COHR":
+        pe_source = (
+            f"street-wing mid/bull; 熊PE锚定{COHR_BEAR_PE_ANCHOR:.0f}×"
+            f"(原mid×0.75高于现价/街低端); {pe_tiers}"
+        )
 
     note = "全量刷新"
     if cfg.ticker == "NVDA":
@@ -307,8 +317,10 @@ def build_street_row(cfg: Config) -> dict:
             f"Q3FY26已报(9/2): NG EPS$3.32 vs $3.24; "
             f"C用+1y; {pe_tiers}"
         )
+    elif cfg.ticker == "COHR":
+        note = f"熊PE锚定{COHR_BEAR_PE_ANCHOR:.0f}×(低于现价~30×/街低端); {pe_tiers}"
     elif cfg.ticker == "MU":
-        note = f"下刊~9/23; {pe_tiers}"
+        note = f"下刊~9/30; {pe_tiers}"
 
     return row_dict(cfg, px, street_tgt, c, eps_src, beat, e_bear, e_base, e_bull,
                     pe_bear_r, pe_base_r, pe_bull_r, pe_tiers, pe_source, None, None,
