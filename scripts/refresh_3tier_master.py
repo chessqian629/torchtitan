@@ -339,7 +339,7 @@ def build_storage_row(cfg: Config) -> dict:
     vjn = fetch_vjn_forward_pe(cfg.ticker)
     note = f"全量刷新; {pe_tiers}"
     if cfg.ticker == "MU":
-        note = f"下刊~9/23; 熊PE锚定5.25; {pe_tiers}"
+        note = f"下刊~9/30; 熊PE锚定5.25; {pe_tiers}"
     return row_dict(cfg, px, street_tgt, c, f"动态NTM w={w}", beat, e_bear, e_base, e_bull,
                     pe_bear_r, pe_base_r, pe_bull_r, pe_tiers, pe_src, dyn_now, vjn, fwd_pe,
                     tp_bear, tp_base, tp_bull, note)
