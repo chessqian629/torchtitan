@@ -29,7 +29,7 @@ FISCAL_END_MONTH = {
 MU_BEAR_PE_ANCHOR = 5.25
 # COHR: street-wing bear (mid×0.75≈33×) sits above spot & street-low (~30× FY27).
 # Anchor bear nearer 1Y hist p25–spot band (~20–30×) so downside is real.
-COHR_BEAR_PE_ANCHOR = 25.0
+COHR_BEAR_PE_ANCHOR = 30.0
 LEGACY_MASTER = "/workspace/us_tech_3tier_master_20260818.csv"
 
 NBIS_ROW = {
