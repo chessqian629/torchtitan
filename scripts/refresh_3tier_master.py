@@ -90,12 +90,18 @@ CONFIGS = [
 ]
 
 
-def fiscal_weight(ticker: str, today: dt.date | None = None) -> float:
+def fiscal_weight(
+    ticker: str,
+    today: dt.date | None = None,
+    eps0: float | None = None,
+    eps1: float | None = None,
+) -> float:
     """Weight on +1y in NTM = (1-w)*0y + w*+1y.
 
     Yahoo often keeps 0y/+1y labels until the Q4 print (~30-45d after
-    fiscal year-end). During that lag, clamp w near year-end so NTM stays
-    on the forward year the market is pricing (matches Yahoo forwardPE).
+    fiscal year-end). During that lag (+1y/0y still very steep), clamp w
+    near year-end. Once labels roll (0y jumps to the new FY), use normal
+    early-year weight so NTM stays on the new 0y.
     """
     today = today or dt.date.today()
     end_month = FISCAL_END_MONTH[ticker]
@@ -104,7 +110,13 @@ def fiscal_weight(ticker: str, today: dt.date | None = None) -> float:
     else:
         fy_end = dt.date(today.year - 1, end_month, 28)
     elapsed = (today - fy_end).days
-    if 0 <= elapsed <= 45:
+    labels_rolled = (
+        eps0 is not None
+        and eps1 is not None
+        and eps0 > 0
+        and (eps1 / eps0) < 1.5
+    )
+    if 0 <= elapsed <= 45 and not labels_rolled:
         return 0.97
     w = max(0.0, min(1.0, elapsed / 365.0))
     return round(w, 2)
@@ -334,9 +346,9 @@ def build_storage_row(cfg: Config) -> dict:
     px = float(info.get("currentPrice") or info.get("regularMarketPrice") or 0)
     street_tgt = float(info.get("targetMeanPrice") or 0)
     fwd_pe = float(info.get("forwardPE") or 0)
-    w = fiscal_weight(cfg.ticker)
     eps0 = float(trend.loc["0y", "current"])
     eps1 = float(trend.loc["+1y", "current"])
+    w = fiscal_weight(cfg.ticker, eps0=eps0, eps1=eps1)
     c = ntm_eps(eps0, eps1, w)
     beat = calc_beat(cfg.ticker, cap=None if cfg.ticker != "INTC" else 15.0)
     e_bear, e_base, e_bull = eps_tiers(c, beat)
@@ -351,7 +363,11 @@ def build_storage_row(cfg: Config) -> dict:
     vjn = fetch_vjn_forward_pe(cfg.ticker)
     note = f"全量刷新; {pe_tiers}"
     if cfg.ticker == "MU":
-        note = f"下刊~9/30; 熊PE锚定5.25; {pe_tiers}"
+        note = (
+            f"Q4FY26已报: NG EPS$33.42 vs~$31.8; "
+            f"Q1FY27指引Rev$61.5B±1.5B EPS$38.15±1; "
+            f"FY27=0y已滚动; 熊PE锚定5.25; {pe_tiers}"
+        )
     return row_dict(cfg, px, street_tgt, c, f"动态NTM w={w}", beat, e_bear, e_base, e_bull,
                     pe_bear_r, pe_base_r, pe_bull_r, pe_tiers, pe_src, dyn_now, vjn, fwd_pe,
                     tp_bear, tp_base, tp_bull, note)
