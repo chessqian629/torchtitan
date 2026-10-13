@@ -116,7 +116,8 @@ def fiscal_weight(
         and eps0 > 0
         and (eps1 / eps0) < 1.5
     )
-    if 0 <= elapsed <= 45 and not labels_rolled:
+    # Keep forward-year weight until Yahoo rolls 0y (can lag 60-90d after FY-end).
+    if elapsed >= 0 and not labels_rolled and elapsed <= 90:
         return 0.97
     w = max(0.0, min(1.0, elapsed / 365.0))
     return round(w, 2)
