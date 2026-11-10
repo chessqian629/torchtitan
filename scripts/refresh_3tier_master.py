@@ -556,9 +556,10 @@ def main():
 
     fieldnames = [
         "ticker", "name", "currency", "px", "street_tgt", "C", "eps_src", "beat_b_pct",
-        "e_bear", "e_base", "e_bull", "pe_bear", "pe_base", "pe_bull", "pe_tiers", "pe_source",
+        "e_bear", "e_base", "e_bull",
         "dynPE_now", "vjn_forward_pe", "yahoo_fwdPE", "tp_bear", "tp_base", "tp_bull",
-        "up_bear_pct", "up_base_pct", "up_bull_pct", "note", "asof",
+        "up_bear_pct", "up_base_pct", "up_bull_pct", "note",
+        "pe_bear", "pe_base", "pe_bull", "pe_tiers", "pe_source", "asof",
     ]
 
     dated = f"/workspace/us_tech_3tier_master_{ASOF.replace('-', '')}.csv"
