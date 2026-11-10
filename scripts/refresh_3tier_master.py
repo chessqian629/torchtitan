@@ -26,11 +26,9 @@ FISCAL_END_MONTH = {
     "005930.KS": 12,
 }
 
-MU_BEAR_PE_ANCHOR = 5.25
-# COHR: street-wing bear (mid×0.75≈33×) sits above spot & street-low (~30× FY27).
-# Anchor bear nearer 1Y hist p25–spot band (~20–30×) so downside is real.
-COHR_BEAR_PE_ANCHOR = 30.0
 LEGACY_MASTER = "/workspace/us_tech_3tier_master_20260818.csv"
+# Recent traded forward-PE lookback for bear/base/bull bands
+PE_LOOKBACK_DAYS = 183  # ~6 months
 
 NBIS_ROW = {
     "ticker": "NBIS",
@@ -45,11 +43,11 @@ NBIS_ROW = {
     "ev_arr_bull": 7.0,
 }
 
-# INTC: FY27 analyst dispersion + inverted PE (no beat rate)
+# INTC: FY2 analyst dispersion + inverted PE (no beat rate)
 INTC_MODEL = {
-    "e_bear": 1.41,
-    "e_base": 2.06,
-    "e_bull": 3.44,
+    "e_bear": 1.27,
+    "e_base": 1.79,
+    "e_bull": 2.84,
     "pe_bear": 55.0,
     "pe_base": 50.0,
     "pe_bull": 45.0,
@@ -195,23 +193,125 @@ def fetch_vjn_forward_pe(ticker: str) -> Optional[float]:
         return None
 
 
-def dynamic_pe_bands(ticker: str, w: float, lookback_days: int = 365) -> tuple[float, float, float, float, str]:
-    """Reuse calibrated PE bands; refresh dynPE_now only."""
-    pe_bear, pe_base, pe_bull, pe_src = load_legacy_pe(ticker)
+def _eps_at_lag(trend, period: str, days_ago: int) -> float:
+    row = trend.loc[period]
+    cur = float(row["current"])
+    def g(col: str) -> float:
+        v = row.get(col)
+        try:
+            return float(v) if v not in (None, 0, 0.0) else cur
+        except Exception:
+            return cur
+
+    if days_ago >= 82:
+        return g("90daysAgo")
+    if days_ago >= 45:
+        return g("60daysAgo")
+    if days_ago >= 20:
+        return g("30daysAgo")
+    if days_ago >= 5:
+        return g("7daysAgo")
+    return cur
+
+
+def finalize_pe_bands(pes: list[float], spot_pe: float) -> tuple[float, float, float, str]:
+    """Map recent PE sample → bear/base/bull with downside vs spot when compressed."""
+    arr = np.array(pes, dtype=float)
+    p10, p25, p50, p75, p90 = [float(x) for x in np.percentile(arr, [10, 25, 50, 75, 90])]
+    mid = p50
+    bull = max(p75, mid * 1.12)
+    bear = p25
+    # Spot already below recent p25 → force 熊PE under spot so downside is real
+    if spot_pe > 0 and spot_pe < p25:
+        bear = min(p10, spot_pe * 0.88)
+        if bear >= spot_pe * 0.98:
+            bear = spot_pe * 0.85
+    elif spot_pe > 0 and bear > spot_pe * 0.95:
+        bear = min(bear, spot_pe * 0.90)
+    if bear >= mid * 0.98:
+        bear = mid * 0.75
+    if bull <= mid * 1.02:
+        bull = mid * 1.15
+    # Keep ordering bear < mid < bull
+    if bear >= mid:
+        bear = mid * 0.75
+    if bull <= mid:
+        bull = mid * 1.15
+    src = (
+        f"近{PE_LOOKBACK_DAYS}d交易前瞻PE "
+        f"p25/50/75={p25:.2f}/{p50:.2f}/{p75:.2f}; now={spot_pe:.2f}"
+    )
+    return round(bear, 1), round(mid, 1), round(bull, 1), src
+
+
+def recent_pe_bands_simple(
+    ticker: str, period: str, lookback_days: int = PE_LOOKBACK_DAYS
+) -> tuple[float, float, float, float, str]:
+    """PE bands from px / Yahoo period EPS (0y or +1y), lag-adjusted."""
     tk = yf.Ticker(ticker)
     trend = tk.get_eps_trend()
+    info = tk.info or {}
+    hist = tk.history(period="1y")
+    px = float(info.get("currentPrice") or info.get("regularMarketPrice") or hist["Close"].iloc[-1])
+    c_now = float(trend.loc[period, "current"])
+    spot_pe = px / c_now if c_now else 0.0
+    end = hist.index[-1].date()
+    pes: list[float] = []
+    for idx, row in hist.iterrows():
+        dago = (end - idx.date()).days
+        if dago > lookback_days:
+            continue
+        e = _eps_at_lag(trend, period, dago)
+        if e > 0:
+            pes.append(float(row["Close"]) / e)
+    if len(pes) < 20:
+        # fallback to street-wing if history thin
+        street = float(info.get("targetMeanPrice") or 0)
+        if street and c_now:
+            b, m, u = street_wing_pe(street, c_now)
+            return round(b, 1), round(m, 1), round(u, 1), spot_pe, "fallback street-wing (thin PE hist)"
+        return 15.0, 20.0, 25.0, spot_pe, "fallback flat PE"
+    b, m, u, src = finalize_pe_bands(pes, spot_pe)
+    return b, m, u, spot_pe, src
+
+
+def dynamic_pe_bands(
+    ticker: str, w: float, lookback_days: int = PE_LOOKBACK_DAYS
+) -> tuple[float, float, float, float, str]:
+    """Storage: lag-adjusted NTM PE over ~6M → p25/50/75 bands."""
+    tk = yf.Ticker(ticker)
+    trend = tk.get_eps_trend()
+    info = tk.info or {}
+    hist = tk.history(period="1y")
     eps0 = float(trend.loc["0y", "current"])
     eps1 = float(trend.loc["+1y", "current"])
     ntm = (1 - w) * eps0 + w * eps1
-    info = tk.info or {}
-    hist = tk.history(period="5d")
     px = float(info.get("currentPrice") or info.get("regularMarketPrice") or hist["Close"].iloc[-1])
-    dyn_now = px / ntm if ntm else 0.0
-    return pe_bear, pe_base, pe_bull, float(dyn_now), pe_src
+    spot_pe = px / ntm if ntm else 0.0
+    end = hist.index[-1].date()
+    pes: list[float] = []
+    for idx, row in hist.iterrows():
+        d = idx.date()
+        dago = (end - d).days
+        if dago > lookback_days:
+            continue
+        e0 = _eps_at_lag(trend, "0y", dago)
+        e1 = _eps_at_lag(trend, "+1y", dago)
+        ww = fiscal_weight(ticker, today=d, eps0=e0, eps1=e1)
+        n = (1 - ww) * e0 + ww * e1
+        if n > 0:
+            pes.append(float(row["Close"]) / n)
+    if len(pes) < 20:
+        try:
+            return (*load_legacy_pe(ticker)[:3], spot_pe, "legacy PE (thin hist)")
+        except Exception:
+            return 5.0, 8.0, 12.0, spot_pe, "fallback flat PE"
+    b, m, u, src = finalize_pe_bands(pes, spot_pe)
+    return b, m, u, spot_pe, src
 
 
 def build_skhy_row(cfg: Config) -> dict:
-    """SKHY Nasdaq ADR: 10 ADR = 1 ORD. Street-wing on USD +1y EPS."""
+    """SKHY Nasdaq ADR: 10 ADR = 1 ORD. Recent +1y traded PE bands."""
     tk = yf.Ticker("SKHY")
     info = tk.info or {}
     trend = tk.get_eps_trend()
@@ -222,8 +322,7 @@ def build_skhy_row(cfg: Config) -> dict:
     # Beat from KR ordinary (ADR surprise feed is noisy); same skip-extreme rule
     beat = calc_beat("000660.KS", cap=None)
     e_bear, e_base, e_bull = eps_tiers(c, beat)
-    pe_bear, pe_base, pe_bull = street_wing_pe(street_tgt, c)
-    pe_bear_r, pe_base_r, pe_bull_r = round(pe_bear, 1), round(pe_base, 1), round(pe_bull, 1)
+    pe_bear_r, pe_base_r, pe_bull_r, spot_pe, pe_src = recent_pe_bands_simple("SKHY", "+1y")
     pe_tiers = f"熊{pe_bear_r}/中{pe_base_r}/牛{pe_bull_r}×"
     tp_bear = e_bear * pe_bear_r
     tp_base = e_base * pe_base_r
@@ -240,14 +339,14 @@ def build_skhy_row(cfg: Config) -> dict:
         parity_note = "10ADR=1ORD"
 
     note = (
-        f"Nasdaq ADR 10:1; street-wing on USD +1y; "
+        f"Nasdaq ADR 10:1; 近6M +1y交易PE; "
         f"beat取自000660.KS; {parity_note}; {pe_tiers}"
     )
-    pe_source = f"street-wing mid=tgt/C (SKHY USD); {pe_tiers}"
+    pe_source = f"{pe_src}; {pe_tiers}"
     return row_dict(
         cfg, px, street_tgt, c, "SKHY +1y/FY2 USD", beat,
         e_bear, e_base, e_bull, pe_bear_r, pe_base_r, pe_bull_r,
-        pe_tiers, pe_source, None, None, fwd_pe,
+        pe_tiers, pe_source, spot_pe, None, fwd_pe,
         tp_bear, tp_base, tp_bull, note,
     )
 
@@ -270,7 +369,7 @@ def build_intc_row(cfg: Config) -> dict:
         "FY27离散度×PE倒挂(熊高倍/牛低倍); "
         f"EV/Sales≈6.2/8.0/11.8×(@FY27 Rev ${m['fy27_rev_b']}B)"
     )
-    eps_src = "FY27离散度(39分析师): $1.41/$2.06/$3.44; 不用beat"
+    eps_src = "FY2离散度(分析师low/avg/high): $1.27/$1.79/$2.84; 不用beat"
     note = (
         f"{pe_tiers}; CapEx>$20B/2027更高; "
         f"净负债${m['net_debt_b']}B; SCIP回购$14.2B; 以色列KG厂地缘风险"
@@ -294,30 +393,25 @@ def build_street_row(cfg: Config) -> dict:
     beat = calc_beat(cfg.ticker, cap=cap)
 
     if cfg.kind == "story0y":
+        period = "0y"
         c = float(trend.loc["0y", "current"])
         eps_src = "FY27=0y(已报FY26)"
     else:
+        period = "+1y"
         c = float(trend.loc["+1y", "current"])
         eps_src = "+1y/FY2"
 
     e_bear, e_base, e_bull = eps_tiers(c, beat)
-    pe_bear, pe_base, pe_bull = street_wing_pe(street_tgt, c)
-    if cfg.ticker == "COHR":
-        pe_bear = COHR_BEAR_PE_ANCHOR
-
-    pe_bear_r, pe_base_r, pe_bull_r = round(pe_bear, 1), round(pe_base, 1), round(pe_bull, 1)
+    pe_bear_r, pe_base_r, pe_bull_r, spot_pe, pe_src = recent_pe_bands_simple(
+        cfg.ticker, period
+    )
     tp_bear = e_bear * pe_bear_r
     tp_base = e_base * pe_base_r
     tp_bull = e_bull * pe_bull_r
     pe_tiers = f"熊{pe_bear_r}/中{pe_base_r}/牛{pe_bull_r}×"
-    pe_source = f"street-wing mid=tgt/C; {pe_tiers}"
-    if cfg.ticker == "COHR":
-        pe_source = (
-            f"street-wing mid/bull; 熊PE锚定{COHR_BEAR_PE_ANCHOR:.0f}×"
-            f"(原mid×0.75高于现价/街低端); {pe_tiers}"
-        )
+    pe_source = f"{pe_src}; {pe_tiers}"
 
-    note = "全量刷新"
+    note = f"近6M交易前瞻PE重标定; {pe_tiers}"
     if cfg.ticker == "NVDA":
         note = f"Q2FY27已报; {pe_tiers}; fwdPE≈{round(fwd_pe, 1)}×"
     elif cfg.ticker == "MRVL":
@@ -330,13 +424,9 @@ def build_street_row(cfg: Config) -> dict:
             f"Q3FY26已报(9/2): NG EPS$3.32 vs $3.24; "
             f"C用+1y; {pe_tiers}"
         )
-    elif cfg.ticker == "COHR":
-        note = f"熊PE锚定{COHR_BEAR_PE_ANCHOR:.0f}×(低于现价~30×/街低端); {pe_tiers}"
-    elif cfg.ticker == "MU":
-        note = f"下刊~9/30; {pe_tiers}"
 
     return row_dict(cfg, px, street_tgt, c, eps_src, beat, e_bear, e_base, e_bull,
-                    pe_bear_r, pe_base_r, pe_bull_r, pe_tiers, pe_source, None, None,
+                    pe_bear_r, pe_base_r, pe_bull_r, pe_tiers, pe_source, spot_pe, None,
                     fwd_pe, tp_bear, tp_base, tp_bull, note)
 
 
@@ -354,20 +444,18 @@ def build_storage_row(cfg: Config) -> dict:
     beat = calc_beat(cfg.ticker, cap=None if cfg.ticker != "INTC" else 15.0)
     e_bear, e_base, e_bull = eps_tiers(c, beat)
     pe_bear, pe_base, pe_bull, dyn_now, pe_src = dynamic_pe_bands(cfg.ticker, w)
-    if cfg.ticker == "MU":
-        pe_bear = MU_BEAR_PE_ANCHOR
     pe_bear_r, pe_base_r, pe_bull_r = round(pe_bear, 1), round(pe_base, 1), round(pe_bull, 1)
     pe_tiers = f"熊{pe_bear_r}/中{pe_base_r}/牛{pe_bull_r}×"
     tp_bear = e_bear * pe_bear_r
     tp_base = e_base * pe_base_r
     tp_bull = e_bull * pe_bull_r
     vjn = fetch_vjn_forward_pe(cfg.ticker)
-    note = f"全量刷新; {pe_tiers}"
+    note = f"近6M NTM交易PE重标定; {pe_tiers}"
     if cfg.ticker == "MU":
         note = (
             f"Q4FY26已报: NG EPS$33.42 vs~$31.8; "
             f"Q1FY27指引Rev$61.5B±1.5B EPS$38.15±1; "
-            f"FY27=0y已滚动; 熊PE锚定5.25; {pe_tiers}"
+            f"FY27=0y已滚动; {pe_tiers}"
         )
     return row_dict(cfg, px, street_tgt, c, f"动态NTM w={w}", beat, e_bear, e_base, e_bull,
                     pe_bear_r, pe_base_r, pe_bull_r, pe_tiers, pe_src, dyn_now, vjn, fwd_pe,
